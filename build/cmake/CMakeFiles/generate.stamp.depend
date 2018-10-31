@@ -1,0 +1,5 @@
+# CMake generation dependency list for this directory.
+C:/RTM/PeopleDetection/cmake/CMakeLists.txt
+C:/RTM/PeopleDetection/cmake/peopledetection-config-version.cmake.in
+C:/RTM/PeopleDetection/cmake/peopledetection-config.cmake.in
+C:/RTM/PeopleDetection/cmake/peopledetection.pc.in

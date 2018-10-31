@@ -1,0 +1,475 @@
+// -*- C++ -*-
+/*!
+ * @file  PeopleDetection.cpp
+ * @brief It is an RTC that performs people detection using Kinect v2.
+ * @date $Date$
+ *
+ * $Id$
+ */
+
+#include "PeopleDetection.h"
+
+//***** add *****************************************************
+//---Kinect関係
+// Kinect
+CComPtr<IKinectSensor> kinect = nullptr;
+
+// Kinect -body-
+CComPtr<IBodyFrameReader> bodyFR = nullptr;
+CComPtr<IBodyFrameSource> bodyFS = nullptr;
+IBody* bodies[BODY_COUNT];
+
+// Kinect -color-
+CComPtr<IColorFrameReader> colorFR = nullptr;
+CComPtr<IColorFrameSource> colorFS = nullptr;
+CComPtr<IFrameDescription> colorFD = nullptr;
+int colorW;
+int colorH;
+unsigned int colorBPP;
+ColorImageFormat colorF = ColorImageFormat::ColorImageFormat_Bgra;
+std::vector<BYTE> colorB;
+
+//***** END add ***********************************************
+
+
+// Module specification
+// <rtc-template block="module_spec">
+static const char* peopledetection_spec[] =
+  {
+    "implementation_id", "PeopleDetection",
+    "type_name",         "PeopleDetection",
+    "description",       "It is an RTC that performs people detection using Kinect v2.",
+    "version",           "1.0.0",
+    "vendor",            "sako",
+    "category",          "Category",
+    "activity_type",     "SPORADIC",
+    "kind",              "DataFlowComponent",
+    "max_instance",      "1",
+    "language",          "C++",
+    "lang_type",         "compile",
+    // Configuration variables
+    "conf.default.person_or_people", "people",
+    "conf.default.yardstick", "xz",
+    "conf.default.joint_for_getting_position", "1",
+
+    // Widget
+    "conf.__widget__.person_or_people", "radio",
+    "conf.__widget__.yardstick", "radio",
+    "conf.__widget__.joint_for_getting_position", "slider",
+    // Constraints
+    "conf.__constraints__.person_or_people", "(person, people)",
+    "conf.__constraints__.yardstick", "(x,xz)",
+    "conf.__constraints__.joint_for_getting_position", "0<=, 24>=",
+
+    "conf.__type__.person_or_people", "string",
+    "conf.__type__.yardstick", "string",
+    "conf.__type__.joint_for_getting_position", "int",
+
+    ""
+  };
+// </rtc-template>
+
+/*!
+ * @brief constructor
+ * @param manager Maneger Object
+ */
+PeopleDetection::PeopleDetection(RTC::Manager* manager)
+    // <rtc-template block="initializer">
+  : RTC::DataFlowComponentBase(manager),
+    m_num_peopleOut("num_people", m_num_people),
+    m_positionsOut("positions", m_positions)
+
+    // </rtc-template>
+{
+}
+
+/*!
+ * @brief destructor
+ */
+PeopleDetection::~PeopleDetection()
+{
+}
+
+
+//***** add *********************************************************************
+//+++++ ret　ができたかどうか確認するための関数 +++++
+// できなかった場合、RTC::RTC_ERRORを返す…はず？
+#define ERROR_CHECK(ret) if((ret) != S_OK){std::stringstream ss; ss << "failed " #ret " " << std::hex << ret << std::endl; throw RTC::RTC_ERROR;}
+
+//+++++ 関節・端点に丸を描画するための関数 +++++
+void drawEllipse(cv::Mat& Image, const Joint& joint, int r, const cv::Scalar& color)
+{
+	// 座標変換用の何かを取得
+	CComPtr<ICoordinateMapper> mapper;
+	ERROR_CHECK(kinect->get_CoordinateMapper(&mapper));
+	// カメラ座標のポイントをカラー座標に変換した後に入れる用の変数の確保
+	ColorSpacePoint point;
+	// カメラ座標のポイントをカラー座標に変換
+	mapper->MapCameraPointToColorSpace(joint.Position, &point);
+	// 関節・端点部分に丸を描画
+	cv::circle(Image, cv::Point(point.X, point.Y), r, color, -1);
+}
+
+float Distance_xz(float x, float z)
+{
+	float distance = (x*x + z*z)*(1 / 2);
+	return distance;
+}
+
+//***** END add *****************************************************************
+
+
+RTC::ReturnCode_t PeopleDetection::onInitialize()
+{
+  // Registration: InPort/OutPort/Service
+  // <rtc-template block="registration">
+  // Set InPort buffers
+  
+  // Set OutPort buffer
+  addOutPort("num_people", m_num_peopleOut);
+  addOutPort("positions", m_positionsOut);
+  
+  // Set service provider to Ports
+  
+  // Set service consumers to Ports
+  
+  // Set CORBA Service Ports
+  
+  // </rtc-template>
+
+  // <rtc-template block="bind_config">
+  // Bind variables and configuration variable
+  bindParameter("person_or_people", m_person_or_people, "people");
+  bindParameter("yardstick", m_yardstick, "xz");
+  bindParameter("joint_for_getting_position", m_joint_for_getting_position, "1");
+  // </rtc-template>
+  
+  //***** add **************************************************************
+  //---Start Kinect
+  // キネクトを取得
+  ERROR_CHECK(GetDefaultKinectSensor(&kinect));
+  // キネクトを開く
+  // ここの→はアロー演算子という。詳しくはアロー演算子とかポインタとかでググる。意味的には『kinectの中のOpenってのをする』という感じ。
+  ERROR_CHECK(kinect->Open());
+  // ここまでできたら『Kinect open』と表示
+  std::cout << "Kinect open" << std::endl;
+
+  //---Kinectでカラー画像をとる準備
+  // カラーフレームソースを取得
+  ERROR_CHECK(kinect->get_ColorFrameSource(&colorFS));
+  // カラーフレームリーダーを開く
+  ERROR_CHECK(colorFS->OpenReader(&colorFR));
+  // フレームの詳細を取得？作成？
+  ERROR_CHECK(colorFS->CreateFrameDescription(ColorImageFormat::ColorImageFormat_Bgra, &colorFD));
+  // カラー画像の横幅を取得
+  ERROR_CHECK(colorFD->get_Width(&colorW));
+  // カラー画像の高さを取得
+  ERROR_CHECK(colorFD->get_Height(&colorH));
+  // カラー画像のBPPを取得
+  ERROR_CHECK(colorFD->get_BytesPerPixel(&colorBPP));
+  // カラー画像のバッファを作成
+  colorB.resize(colorW * colorH * colorBPP);
+
+  //---Kinectでbodyをとる準備
+  // ボディフレームソースを取得
+  ERROR_CHECK(kinect->get_BodyFrameSource(&bodyFS));
+  // ボディフレームリーダーを開く
+  ERROR_CHECK(bodyFS->OpenReader(&bodyFR));
+  // ボディ配列を初期化する
+  for (auto& body : bodies)
+  {
+	  body = nullptr;
+  }
+  //***** END add **********************************************************
+
+
+  return RTC::RTC_OK;
+}
+
+
+RTC::ReturnCode_t PeopleDetection::onFinalize()
+{
+  return RTC::RTC_OK;
+}
+
+/*
+RTC::ReturnCode_t PeopleDetection::onStartup(RTC::UniqueId ec_id)
+{
+  return RTC::RTC_OK;
+}
+*/
+
+/*
+RTC::ReturnCode_t PeopleDetection::onShutdown(RTC::UniqueId ec_id)
+{
+  return RTC::RTC_OK;
+}
+*/
+
+
+RTC::ReturnCode_t PeopleDetection::onActivated(RTC::UniqueId ec_id)
+{
+	// 出力データの初期化
+	m_num_people.data = 0;
+
+	// ボディ配列を初期化する
+	for (auto& body : bodies)
+	{
+		body = nullptr;
+	}
+  return RTC::RTC_OK;
+}
+
+
+RTC::ReturnCode_t PeopleDetection::onDeactivated(RTC::UniqueId ec_id)
+{
+  return RTC::RTC_OK;
+}
+
+
+RTC::ReturnCode_t PeopleDetection::onExecute(RTC::UniqueId ec_id)
+{
+	//---カラー画像の処理
+	// カラーフレームを取得する
+	CComPtr<IColorFrame> colorFrame;
+	ERROR_CHECK(colorFR->AcquireLatestFrame(&colorFrame));
+	ERROR_CHECK(colorFrame->CopyConvertedFrameDataToArray(colorB.size(), &colorB[0], colorF));
+	// カラー画像を作成
+	cv::Mat colorImage(colorH, colorW, CV_8UC4, &colorB[0]);
+
+	//---ボディの処理
+	CComPtr<IBodyFrame> bodyF;
+	// 新しいボディフレームを受け取る
+	ERROR_CHECK(bodyFR->AcquireLatestFrame(&bodyF));
+
+	// 検出人数のリセット
+	m_num_people.data = 0;
+
+
+	//---一人検出モードの時
+	if (m_person_or_people == "person")
+	{
+		//***** "hitori"モードにしかないもの *****************************
+		//--比較するための変数
+		// Kinectからの最も近い人への距離
+		float closest_distance = 20000000;
+		// 比較する距離
+		float distance = 0;
+		// 一人でもジョイントを取得する場面まで行ったかどうかの確認変数
+		bool hito_iruka = false;
+		// 一番近い人の関節・端点配列を入れるための配列
+		Joint closest_joints[JointType::JointType_Count];
+		// 検出人数は一人
+		m_num_people.data = 1;
+		//***** END "hitori"モードにしかないもの *****************************
+
+		for (auto& body : bodies)
+		{
+			if (body != nullptr){
+				body->Release();
+				body = nullptr;
+			}
+		}
+		ERROR_CHECK(bodyF->GetAndRefreshBodyData(6, &bodies[0]));
+		m_positions.data.length(3 * 6);
+		const int R = 10;
+		for (auto body : bodies)
+		{
+			if (body == nullptr)
+			{
+				continue;
+			}
+			BOOLEAN isTracked = false;
+			ERROR_CHECK(body->get_IsTracked(&isTracked));
+			if (!isTracked)
+			{
+				continue;
+			}
+			//***** "hitoriモードにしかないもの****************************************
+			// 人数は１人で確定なのでこれはいらない
+			// m_ninzu.data++;
+			// １人でもトラッキングされてたらこれがtrueになる
+			hito_iruka = true;
+			//***** END "hitoriモードにしかないもの****************************************
+
+			Joint joints[JointType::JointType_Count];
+			body->GetJoints(JointType::JointType_Count, joints);
+
+			//***** "hitoriモードにしかないもの****************************************
+			// 現在処理しているボディの距離を取得する
+			// z軸の距離のみで測定するバージョン
+			if (m_yardstick == "z")
+			{
+				distance = joints[m_joint_for_getting_position].Position.Z;
+			}
+			// x,y,z の距離で測定するバージョン（yいらなくね？）
+			else if (m_yardstick == "xz")
+			{
+				distance = Distance_xz(joints[m_joint_for_getting_position].Position.X, joints[m_joint_for_getting_position].Position.Z);
+			}
+
+			// 距離が前のものより短く、0でない場合、更新する
+			if (closest_distance >= distance && distance != 0)
+			{
+				// 距離の更新
+				closest_distance = distance;
+				// 関節・端点配列の更新
+				memcpy(closest_joints, joints, sizeof(joints));
+			}
+			//***** END "hitoriモードにしかないもの****************************************
+		}
+
+		// １人でも検出していたら、ジョイントを描画する
+		if (hito_iruka)
+		{
+			for (auto joint : closest_joints)
+			{
+				drawEllipse(colorImage, joint, R, cv::Scalar(255, 0, 0));
+			}
+			// 送る用データの作成
+			m_positions.data[0] = closest_joints[m_joint_for_getting_position].Position.X;
+			m_positions.data[1] = closest_joints[m_joint_for_getting_position].Position.Y;
+			m_positions.data[2] = closest_joints[m_joint_for_getting_position].Position.Z;
+		}
+
+		// 画像の表示
+		cv::resize(colorImage, colorImage, cv::Size(), 0.5, 0.5);
+		cv::imshow("Image", colorImage);
+		cv::waitKey(1);
+
+		m_num_peopleOut.write();
+		m_positionsOut.write();
+
+	}
+	//---全員検出モードの時
+	else if (m_person_or_people == "people")
+	{
+		// 過去のbodies配列をリリース
+		for (auto& body : bodies)
+		{
+			// bodyがヌルポじゃなかったら
+			if (body != nullptr){
+				// ボディをリリースして…
+				body->Release();
+				// ボディをヌルポにする
+				body = nullptr;
+			}
+		}
+
+		// ボディデータを取得する
+		ERROR_CHECK(bodyF->GetAndRefreshBodyData(6, &bodies[0]));
+		// 位置出力用配列の大きさを決める
+		// (一人当たり)3つ(x, y, z) * 6人
+		m_positions.data.length(3 * 6);
+
+		//--関節・端点位置の取得
+		// 関節・端点位置に描く丸の大きさ
+		const int R = 10;
+
+		// bodies配列に入っているbody一つ一つに対して処理を行う
+		for (auto body : bodies)
+		{
+			// もしボディがヌルポだったら、このボディに関しては以降の処理を飛ばす
+			if (body == nullptr)
+			{
+				continue;
+			}
+
+			// ボディがトラッキングできてるか確かめるための変数
+			BOOLEAN isTracked = false;
+			//--ボディがトラッキングされているかを取得する
+			ERROR_CHECK(body->get_IsTracked(&isTracked));
+			// トラッキングされていなかったら、このボディに関しては以降の処理を飛ばす
+			if (!isTracked)
+			{
+				continue;
+			}
+			// トラッキングされている人数をカウントする
+			m_num_people.data++;
+			// 関節・端点位置を取得する用の配列を確保
+			Joint joints[JointType::JointType_Count];
+			// 関節・端点位置を取得
+			body->GetJoints(JointType::JointType_Count, joints);
+			// 各関節・端点位置に関して描画処理を行う
+			for (auto joint : joints)
+			{
+				// 関節・端点位置が『トラッキング状態』だったら『青？』丸を描画
+				if (joint.TrackingState == TrackingState::TrackingState_Tracked)
+				{
+					drawEllipse(colorImage, joint, R, cv::Scalar(255, 0, 0));
+				}
+				// 関節・端点位置が『トラッキング状態』だったら『水色？』丸を描画
+				if (joint.TrackingState == TrackingState::TrackingState_Inferred)
+				{
+					drawEllipse(colorImage, joint, R, cv::Scalar(255, 255, 0));
+				}
+			}
+
+			// 検出された人の関節・端点位置を配列に保存
+			m_positions.data[0 + (m_num_people.data - 1) * 3] = joints[m_joint_for_getting_position].Position.X;
+			m_positions.data[1 + (m_num_people.data - 1) * 3] = joints[m_joint_for_getting_position].Position.Y;
+			m_positions.data[2 + (m_num_people.data - 1) * 3] = joints[m_joint_for_getting_position].Position.Z;
+		}
+
+		// 画像の表示
+		cv::resize(colorImage, colorImage, cv::Size(), 0.5, 0.5);
+		cv::imshow("Image", colorImage);
+		cv::waitKey(1);
+
+		m_num_peopleOut.write();
+		m_positionsOut.write();
+	}
+  return RTC::RTC_OK;
+}
+
+/*
+RTC::ReturnCode_t PeopleDetection::onAborting(RTC::UniqueId ec_id)
+{
+  return RTC::RTC_OK;
+}
+*/
+
+/*
+RTC::ReturnCode_t PeopleDetection::onError(RTC::UniqueId ec_id)
+{
+  return RTC::RTC_OK;
+}
+*/
+
+/*
+RTC::ReturnCode_t PeopleDetection::onReset(RTC::UniqueId ec_id)
+{
+  return RTC::RTC_OK;
+}
+*/
+
+/*
+RTC::ReturnCode_t PeopleDetection::onStateUpdate(RTC::UniqueId ec_id)
+{
+  return RTC::RTC_OK;
+}
+*/
+
+/*
+RTC::ReturnCode_t PeopleDetection::onRateChanged(RTC::UniqueId ec_id)
+{
+  return RTC::RTC_OK;
+}
+*/
+
+
+
+extern "C"
+{
+ 
+  void PeopleDetectionInit(RTC::Manager* manager)
+  {
+    coil::Properties profile(peopledetection_spec);
+    manager->registerFactory(profile,
+                             RTC::Create<PeopleDetection>,
+                             RTC::Delete<PeopleDetection>);
+  }
+  
+};
+
+

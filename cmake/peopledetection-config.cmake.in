@@ -1,0 +1,54 @@
+# PeopleDetection CMake config file
+#
+# This file sets the following variables:
+# PeopleDetection_FOUND - Always TRUE.
+# PeopleDetection_INCLUDE_DIRS - Directories containing the PeopleDetection include files.
+# PeopleDetection_IDL_DIRS - Directories containing the PeopleDetection IDL files.
+# PeopleDetection_LIBRARIES - Libraries needed to use PeopleDetection.
+# PeopleDetection_DEFINITIONS - Compiler flags for PeopleDetection.
+# PeopleDetection_VERSION - The version of PeopleDetection found.
+# PeopleDetection_VERSION_MAJOR - The major version of PeopleDetection found.
+# PeopleDetection_VERSION_MINOR - The minor version of PeopleDetection found.
+# PeopleDetection_VERSION_REVISION - The revision version of PeopleDetection found.
+# PeopleDetection_VERSION_CANDIDATE - The candidate version of PeopleDetection found.
+
+message(STATUS "Found PeopleDetection-@PROJECT_VERSION@")
+set(PeopleDetection_FOUND TRUE)
+
+find_package(<dependency> REQUIRED)
+
+#set(PeopleDetection_INCLUDE_DIRS
+#    "@CMAKE_INSTALL_PREFIX@/include/@PROJECT_NAME_LOWER@-@PROJECT_VERSION_MAJOR@"
+#    ${<dependency>_INCLUDE_DIRS}
+#    )
+#
+#set(PeopleDetection_IDL_DIRS
+#    "@CMAKE_INSTALL_PREFIX@/include/@PROJECT_NAME_LOWER@-@PROJECT_VERSION_MAJOR@/idl")
+set(PeopleDetection_INCLUDE_DIRS
+    "@CMAKE_INSTALL_PREFIX@/include/@CPACK_PACKAGE_FILE_NAME@"
+    ${<dependency>_INCLUDE_DIRS}
+    )
+set(PeopleDetection_IDL_DIRS
+    "@CMAKE_INSTALL_PREFIX@/include/@CPACK_PACKAGE_FILE_NAME@/idl")
+
+
+if(WIN32)
+    set(PeopleDetection_LIBRARIES
+        "@CMAKE_INSTALL_PREFIX@/@LIB_INSTALL_DIR@/@CMAKE_SHARED_LIBRARY_PREFIX@@PROJECT_NAME_LOWER@@CMAKE_STATIC_LIBRARY_SUFFIX@"
+        ${<dependency>_LIBRARIES}
+        )
+else(WIN32)
+    set(PeopleDetection_LIBRARIES
+        "@CMAKE_INSTALL_PREFIX@/@LIB_INSTALL_DIR@/@CMAKE_SHARED_LIBRARY_PREFIX@@PROJECT_NAME_LOWER@@CMAKE_SHARED_LIBRARY_SUFFIX@"
+        ${<dependency>_LIBRARIES}
+        )
+endif(WIN32)
+
+set(PeopleDetection_DEFINITIONS ${<dependency>_DEFINITIONS})
+
+set(PeopleDetection_VERSION @PROJECT_VERSION@)
+set(PeopleDetection_VERSION_MAJOR @PROJECT_VERSION_MAJOR@)
+set(PeopleDetection_VERSION_MINOR @PROJECT_VERSION_MINOR@)
+set(PeopleDetection_VERSION_REVISION @PROJECT_VERSION_REVISION@)
+set(PeopleDetection_VERSION_CANDIDATE @PROJECT_VERSION_CANDIDATE@)
+
