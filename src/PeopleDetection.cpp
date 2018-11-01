@@ -222,6 +222,8 @@ RTC::ReturnCode_t PeopleDetection::onActivated(RTC::UniqueId ec_id)
 
 RTC::ReturnCode_t PeopleDetection::onDeactivated(RTC::UniqueId ec_id)
 {
+
+	cv::destroyAllWindows();
   return RTC::RTC_OK;
 }
 
